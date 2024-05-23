@@ -1,0 +1,6 @@
+trash_tables/
+.ipynb_checkpoints/
+LegacyService.py
+__pycache__/
+tables/
+
