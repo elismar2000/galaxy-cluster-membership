@@ -14,6 +14,42 @@ from scipy.optimize import curve_fit
 from scipy.interpolate import interp1d
 
 
+import matplotlib.cm as cm
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+from matplotlib import rc, rcParams
+f = 0.8
+
+fontsize = 35 * f
+labelsize = 35 * f
+
+rc("xtick", labelsize=fontsize * f)
+rc("ytick", labelsize=fontsize * f)
+rcParams["axes.linewidth"] = 5.3 * f
+rcParams["xtick.major.width"] = 5.3 * f
+rcParams["xtick.minor.width"] = 5.3 * f
+rcParams["ytick.major.width"] = 5.3 * f
+rcParams["ytick.minor.width"] = 5.3 * f
+rcParams["xtick.major.size"] = 12.5 * f
+rcParams["xtick.minor.size"] = 6.5 * f
+rcParams["ytick.major.size"] = 12.5 * f
+rcParams["ytick.minor.size"] = 6.5 * f
+
+font = {'family': 'serif',
+        'color':  'black',
+        'weight': 'normal',
+        'size': 50 * f,
+        }
+
+
+cm1 = plt.cm.get_cmap('jet')
+cm2 = plt.cm.get_cmap('rainbow')
+cm3 = plt.cm.get_cmap('gnuplot2')
+
+color_values = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+colors1 = [cm1(value) for value in color_values]
+colors3 = [cm3(value) for value in color_values]
+
+
 
 #Function to compute galaxies' clustercentric distances
 def clustercentric_distance(ra, dec, ra0, dec0):
@@ -215,3 +251,93 @@ def sigma_clipping(z_spec, ids, zlower, zupper, sigma):
     id_members = ids[cluster_max_cut][~cluster_sig.mask]
     
     return specz_members, id_members
+
+
+#Function to compute priors in the same way as in George+11
+def priors_george11(rmags, zps, clc_dist, zc, rc, plot=False):
+    
+    '''
+    Method to calculate priors as a function of redshift and magnitude bins,
+    in a very similar way as defined in the original paper of the membership method (George+11).
+    It seems to work only for clusters at higher redshifts (z >~ 0.5), otherwise it underestimates the probability
+    of galaxies belonging to the field.
+
+    rmags : array containing the r magnitude of galaxies in the cluster
+    
+    zps : array containing the photo-zs of galaxies in the cluster
+    
+    clc_sep : array containing the clustercentric distances of the objects
+    
+    zc : redshift of the cluster
+    
+    R200 : virial radius of the cluster in deg
+
+    plot : True of False
+        define whether to plot a figure ilustrating the computation of the priors or not
+    '''
+    
+    fig = plt.figure(figsize=(10, 10))
+    ax1 = fig.add_subplot(111)
+    color = cm.rainbow(np.linspace(0, 1, 14))
+    
+    dr = 0.9 #width of magnitude bins
+    r_min = 12.9 #minimum r magnitude
+    r_max = 22.0 #maximum r magnitude
+    dz = 0.05 #width of photo-z bins
+    z_max = 0.7 #maximum range of photo-zs
+    
+    priors = {}
+    
+    for r, i in zip(np.arange(r_min, r_max, dr), range(len(np.arange(r_min, r_max, dr)))): 
+        mask_r = (rmags > r) & (rmags < r+dr)
+        sigma = sigma_nmad(np.mean(rmags[mask_r]))
+        
+        mask_field = ~((clc_dist < 3*rc) & (zps > zc - 5*sigma) & (zps < zc + 5*sigma))
+        #I only want galaxies in this particular magnitude bin and those belonging to the field
+        mask = mask_field & mask_r
+        
+        Nf = np.histogram(zps[mask], range=(0, z_max), bins=int(np.round(z_max/dz)))[0]
+        zp_bins = np.histogram(zps[mask], range=(0, z_max), bins=int(np.round(z_max/dz)))[1][:-1] + dz/2
+
+        #The field angular area will be different when we consider the photo-z region of the cluster and the photo-z region beyond the cluster
+        nf = np.concatenate((Nf[(zp_bins < zc + 5*sigma) & (zp_bins > zc - 5*sigma)] / (dz * np.pi * ((5*rc)**2 - (3*rc)**2)), 
+                             Nf[(zp_bins > zc + 5*sigma) | (zp_bins < zc - 5*sigma)] / (dz * np.pi * (5*rc)**2)))
+        
+        #Interpolate the points and get the value of nf at zc
+        nf_function = interp1d(x=zp_bins, y=nf, kind="linear")
+        zp_bins_interp = np.linspace(zp_bins.min(), zp_bins.max(), 100)
+        nf_interp = nf_function(zp_bins_interp)
+        
+        nf_cluster = nf_function(zc)
+        
+        #Computing volume of the cluster (considering it a cylinder) and the number of field galaxies in this volume
+        if (zc - 5*sigma <= 0): volume_cluster = np.pi * (zc + 3*sigma) * rc**2
+        if (zc - 5*sigma > 0): volume_cluster = np.pi * 6*sigma * rc**2
+            
+        Nf_cluster = nf_cluster * volume_cluster
+            
+        #Total number of galaxies in the cluster volume
+        Ntot = np.sum((zps > zc - 3*sigma) & (zps < zc + 3*sigma) & (clc_dist < rc))
+        
+        #Computing the prior P(g in F)
+        P_ginF = Nf_cluster / Ntot
+        
+        priors["{:.2f} < r < {:.2f}".format(r, r+dr)] = P_ginF
+  
+        if plot == True:
+            ax1.scatter(zp_bins, nf, color=color[i], lw=5, marker="s", s=20)
+            ax1.plot(zp_bins_interp, nf_interp, color=color[i], lw=3, label=r"${:.2f} < r < {:.2f}$".format(r, r+dr))
+
+
+    if plot == True:
+        #ax1.set_title(cl_names[cluster], fontdict=font)
+
+        ax1.set_xlabel(r"$z_p$", fontdict=font)
+        ax1.set_ylabel(r"$N_f / dz / d \Omega$", fontdict=font)
+
+        ax1.axvline(zc, color="black", label=r"$z_C$")
+        ax1.axvline(zc + 5*sigma, color="blue", label=r"$z_C + 5\sigma$")
+
+        ax1.legend(fontsize=10)
+        
+    return priors
