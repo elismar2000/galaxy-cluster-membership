@@ -77,10 +77,9 @@ def histedges_equalN(x, nbin):
                      np.sort(x))
 
 
-training_set = pd.read_csv("../../Masters/Pesquisa/CHANCES-target-selection/Results_DF.csv",
- usecols=['r_aper_6', 'zml', 'z'])
+training_set = pd.read_csv("/work/Doc/galaxy-cluster-membership/testing_dataset_photoz.csv", usecols=['r_PStotal', 'zml', 'z'])
 
-rmag_train = training_set["r_aper_6"]
+rmag_train = training_set["r_PStotal"]
 zml_train = training_set["zml"]
 z_train = training_set["z"]
 
@@ -90,9 +89,9 @@ fig = plt.figure(figsize=(15, 6))
 ax1 = fig.add_subplot(121)
 
 n, bins, patches = ax1.hist(rmag_train, histedges_equalN(rmag_train, 25), histtype='bar', rwidth=0.8)
-ax1.set_xlabel("r_aper_6", fontsize=fontsize)
+ax1.set_xlabel("r_PStotal", fontsize=fontsize)
 ax1.set_ylabel("number of objects", fontsize=fontsize)
-ax1.set_title("R_aper_6 histogram with fixed number of objects per bin", fontsize=fontsize*0.6)
+ax1.set_title("r_PStotal histogram with fixed number of objects per bin", fontsize=fontsize*0.6)
 
 mag = np.array(bins)
 sigma_nmad = []
@@ -123,11 +122,13 @@ xnew = np.linspace(xdata[0], xdata[-1], 100)
 # ax.scatter(xdata, ydata)
 ax2.bar(mag_new[:-1], sigma_nmad_new, alpha=0.8, width=0.2)
 ax2.plot(xnew, func1(xnew, *popt1), linewidth=2.0, color='red', label="Fitting function (3rd order polynomial)")
-ax2.set_xlabel("Magnitude (r_aper_6)", fontsize=fontsize)
+ax2.set_xlabel("Magnitude (r_PStotal)", fontsize=fontsize)
 ax2.set_ylabel(r"Mean $\sigma_{NMAD}$", fontsize=fontsize)
 ax2.xaxis.set_tick_params(labelsize=labelsize, width=3, rotation=90)
 ax2.yaxis.set_tick_params(labelsize=labelsize, width=3)
 ax2.legend()
+
+fig.tight_layout(pad=1.0)
     
 def sigma_nmad(r):
     if (r > mag_new[:-1][2]): sigma_nmad = func1(r, *popt1)
@@ -194,46 +195,141 @@ def calc_PDF_series(weights, means, stds, x_range=None, optimize_zml=False):
     return PDFs, zmls, x
 
 
-#===========================================
-#Aqui eu tive que atualizar essa função pra ler os weights, means e stds como se fossem arrays de arrays, e não arrays de listas contendo floats como antes
-#Além disso eu tirei aqueles "z" eu eu estava usando pra calcular o "P_pz_G" e "P_pz_F", pois aparentemente não é útil. Ver isso com mais calma depois.
-#===========================================
-
 
 #Function to compute P_pz_G and P_pz_F, two entries of the membership probability equation
-def P_pz(i, zagl, means, weights, stds, sigma):
-    
-    # means = np.array([float(_) for _ in means[i].split(',')])
-    # weights = np.array([float(_) for _ in weights[i].split(',')])
-    # stds = np.array([float(_) for _ in stds[i].split(',')])
+def zp_mem_prob(zps, zc, means, weights, stds, sigma):
+    '''
+    Compute cluster and field membership probabilities given the i-th galaxy photo-z PDF parameters
 
-    means = means[i]
-    weights = weights[i]
-    stds = stds[i]
+    Parameters
+    ----------
+    i : integer
+        iteration index for the i-th galaxy
 
-    pdfs, zmls, x = calc_PDF_series(weights, means, stds) 
-    
-    pdfs_interp = interp1d(x, pdfs)
-    a = 1 / integrate.quad(pdfs_interp, 0.0, 1.0)[0]
+    zc : float
+        cluster redshift
 
-    pdf_func = lambda x: a * pdfs_interp(x)
-        
+    means : array
+        means of the photo-z PDFs
+
+    weights : array
+        weights of the photo-z PDFs
+
+    stds : array
+        standard deviations of the photo-z PDFs
+
+    sigma : float
+        width of the gaussian representing the cluster in photo-z space
+    '''
+
     #This gaussian represents the cluster
-    def gaussian(x, zagl, sigma):
-        y = lambda x, zagl, sigma: (1 / (sigma * np.sqrt(2* np.pi))) * np.exp(-(x - zagl)**2 / (2*sigma**2)) 
-        a = 1 / integrate.quad(y, 0.0, np.inf, args=(zagl, sigma))[0]
-        return a * y(x, zagl, sigma)
+    def gaussian(x, zc, sigma):
+        y = lambda x, zc, sigma: (1 / (sigma * np.sqrt(2* np.pi))) * np.exp(-(x - zc)**2 / (2*sigma**2)) 
+        a = 1 / integrate.quad(y, 0.0, np.inf, args=(zc, sigma))[0]
+        return a * y(x, zc, sigma)
 
-    if zagl - 3*sigma <= 0:
-        P_pz_G = integrate.quad(lambda x, sigma, zagl: pdf_func(x) * gaussian(x, zagl, sigma), 0.0, zagl + 3*sigma, args=(sigma, zagl))[0] 
-        P_pz_F = integrate.quad(lambda x, sigma: pdf_func(x) / (6*sigma), 0.0, zagl + 3*sigma, args=(sigma))[0]
+
+    P_pz_C_i_array = np.zeros(len(zps))
+    P_pz_F_i_array = np.zeros(len(zps))
+
+    for i in range(len(zps)): 
+        means_ = means[i]
+        weights_ = weights[i]
+        stds_ = stds[i]
         
-    if zagl - 3*sigma > 0:
-        P_pz_G = integrate.quad(lambda x, sigma, zagl: pdf_func(x) * gaussian(x, zagl, sigma), zagl - 3*sigma, zagl + 3*sigma, args=(sigma, zagl))[0] 
-        P_pz_F = integrate.quad(lambda x, sigma: pdf_func(x) / (6*sigma), zagl - 3*sigma, zagl + 3*sigma, args=(sigma))[0]
+        pdfs, zmls, x = calc_PDF_series(weights_, means_, stds_) 
         
+        pdfs_interp = interp1d(x, pdfs)
+        a = 1 / integrate.quad(pdfs_interp, 0.0, 1.0)[0]
+
+        pdf_func = lambda x: a * pdfs_interp(x)
+            
+        if zc - 3*sigma <= 0:
+            P_pz_C = integrate.quad(lambda x, sigma, zc: pdf_func(x) * gaussian(x, zc, sigma), 0.0, zc + 3*sigma, args=(sigma, zc))[0] 
+            P_pz_F = integrate.quad(lambda x, sigma: pdf_func(x) / (6*sigma), 0.0, zc + 3*sigma, args=(sigma))[0]
+            
+        if zc - 3*sigma > 0:
+            P_pz_C = integrate.quad(lambda x, sigma, zc: pdf_func(x) * gaussian(x, zc, sigma), zc - 3*sigma, zc + 3*sigma, args=(sigma, zc))[0] 
+            P_pz_F = integrate.quad(lambda x, sigma: pdf_func(x) / (6*sigma), zc - 3*sigma, zc + 3*sigma, args=(sigma))[0]
         
-    return P_pz_G, P_pz_F
+        P_pz_C_i_array[i] = P_pz_C
+        P_pz_F_i_array[i] = P_pz_F
+
+    return P_pz_C_i_array, P_pz_F_i_array
+
+
+# def zp_mem_prob(zps, zc, means, weights, stds, sigma):
+#     '''
+#     Complement to P_pz function. It computes the cluster and field membership probabilities
+#     to all galaxies
+
+#     Parameters
+#     ----------
+#     i : integer
+#         iteration index for the i-th galaxy
+
+#     zc : float
+#         cluster redshift
+
+#     means : array
+#         means of the photo-z PDFs
+
+#     weights : array
+#         weights of the photo-z PDFs
+
+#     stds : array
+#         standard deviations of the photo-z PDFs
+
+#     sigma : float
+#         width of the gaussian representing the cluster in photo-z space
+#     '''
+    
+#     P_pz_C_i_array = np.zeros(len(zps))
+#     P_pz_F_i_array = np.zeros(len(zps))
+
+#     for i in range(len(zps)):  
+#         P_pz_C_i, P_pz_F_i = P_pz(i, zc, means, weights, stds, sigma)
+#         P_pz_C_i_array[i] = P_pz_C_i
+#         P_pz_F_i_array[i] = P_pz_F_i
+           
+#     return P_pz_C_i_array, P_pz_F_i_array
+
+
+def radial_mem_prob(clc_dist, plot=True):
+    
+    # creating CDF of projected clustercentric distances
+    Hz, Rcz = np.histogram(clc_dist, bins=100, normed=True)
+    dx = Rcz[1] - Rcz[0]
+    Fz = np.cumsum(Hz)*dx
+
+
+    rho_c = lambda R, w1, alpha: 2 * np.pi * w1 * (R**(2 - alpha))/(2 - alpha)
+    rho_f = lambda R, w2: np.pi * w2 * R**2
+    rho = lambda R, w1, w2, alpha: rho_c(R, w1, alpha) + rho_f(R, w2)
+    
+    
+    params = curve_fit(rho, Rcz[1:], Fz)[0]
+    w1, w2, alpha = params
+    rho_fitted = rho(Rcz[1:], *params)
+    
+    
+    if plot == True:
+        fig = plt.figure(figsize=(10, 10))
+
+        ax = fig.add_subplot(111)    
+        ax.plot(Rcz[1:], Fz, lw=4.0)
+        ax.plot(Rcz[1:], rho_fitted, lw=4.0, ls="--", label="'Fit'")
+        ax.set_xlabel(r"$R_c$ (deg)", fontdict=font)
+        ax.set_ylabel("CDF", fontdict=font)
+        ax.legend(fontsize=20)
+
+    
+    #k is a normalizing factor for the probabilities
+    k = rho_c(clc_dist, w1, alpha) + rho_f(clc_dist, w2)
+    Pmem_R_C = rho_c(clc_dist, w1, alpha) / k
+    Pmem_R_F = rho_f(clc_dist, w2) / k
+    
+    return Pmem_R_C, Pmem_R_F
 
 
 #Function to perform sigma_clipping
