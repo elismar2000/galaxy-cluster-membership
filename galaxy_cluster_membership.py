@@ -197,7 +197,7 @@ def calc_PDF_series(weights, means, stds, x_range=None, optimize_zml=False):
 
 
 #Function to compute P_pz_G and P_pz_F, two entries of the membership probability equation
-def zp_mem_prob(zps, zc, means, weights, stds, sigma):
+def zp_mem_prob_george11(zps, zc, means, weights, stds, sigma):
     '''
     Compute cluster and field membership probabilities given the i-th galaxy photo-z PDF parameters
 
@@ -231,7 +231,6 @@ def zp_mem_prob(zps, zc, means, weights, stds, sigma):
 
     P_pz_C_i_array = np.zeros(len(zps))
     P_pz_F_i_array = np.zeros(len(zps))
-
     for i in range(len(zps)): 
         means_ = means[i]
         weights_ = weights[i]
@@ -258,47 +257,105 @@ def zp_mem_prob(zps, zc, means, weights, stds, sigma):
     return P_pz_C_i_array, P_pz_F_i_array
 
 
-# def zp_mem_prob(zps, zc, means, weights, stds, sigma):
-#     '''
-#     Complement to P_pz function. It computes the cluster and field membership probabilities
-#     to all galaxies
 
-#     Parameters
-#     ----------
-#     i : integer
-#         iteration index for the i-th galaxy
-
-#     zc : float
-#         cluster redshift
-
-#     means : array
-#         means of the photo-z PDFs
-
-#     weights : array
-#         weights of the photo-z PDFs
-
-#     stds : array
-#         standard deviations of the photo-z PDFs
-
-#     sigma : float
-#         width of the gaussian representing the cluster in photo-z space
-#     '''
+def P_pz_v2(zc, rmag, means, weights, stds, fz=3.0):
     
-#     P_pz_C_i_array = np.zeros(len(zps))
-#     P_pz_F_i_array = np.zeros(len(zps))
+    '''
+    Compute the membership probability of galaxies in a cluster by integrating the photo-z PDF
+    in the interval 0 < zc - fz*sigma_i*(1+zc) < zc + fz*sigma_i*(1+zc)
+    
+    zc : float
+        redshift of the cluster
+    
+    rmag : array
+        r-band magnitude of the galaxies in which the membership will be applied
+    
+    means : array
+        means of the photo-z PDFs
 
-#     for i in range(len(zps)):  
-#         P_pz_C_i, P_pz_F_i = P_pz(i, zc, means, weights, stds, sigma)
-#         P_pz_C_i_array[i] = P_pz_C_i
-#         P_pz_F_i_array[i] = P_pz_F_i
-           
-#     return P_pz_C_i_array, P_pz_F_i_array
+    weights : array
+        weights of the photo-z PDFs
+
+    stds : array
+        standard deviations of the photo-z PDFs
+    
+    fz : float
+        defines the range of photo-zs for candidate cluster members in terms of sigma_nmad
+    '''
+    
+    sigma = np.array([sigma_nmad(r) for r in rmag])
+    
+    
+    P_pz_C_array = np.zeros(len(rmag))
+    for i in range(len(rmag)):
+
+        sigma_i = sigma[i]
+       
+        means_ = means[i]
+        weights_ = weights[i]
+        stds_ = stds[i]    
+
+        pdfs, zmls, x = calc_PDF_series(weights_, means_, stds_)    
+        pdfs_interp = interp1d(x, pdfs)
+        a = 1 / integrate.quad(pdfs_interp, 0.0, 1.0)[0]
+        pdf_func = lambda x: a * pdfs_interp(x)
+
+        if zc - fz*sigma_i*(1+zc) <= 0:
+            P_pz_C = integrate.quad(lambda x: pdf_func(x), 0.0, zc + fz*sigma_i*(1+zc))[0] 
+
+        if zc - fz*sigma_i*(1+zc) > 0:
+            P_pz_C = integrate.quad(lambda x: pdf_func(x), zc - fz*sigma_i*(1+zc), zc + fz*sigma_i*(1+zc))[0] 
+                                    
+        P_pz_C_array[i] = P_pz_C
+        
+    return P_pz_C_array
 
 
-def radial_mem_prob(clc_dist, plot=True):
+
+def P_pz_v2_mock(zc, zps, rmag, fz=3.0):
+    
+    '''
+    Perform the membership of galaxies in a cluster mock
+    
+    zc : redshift of the cluster
+    
+    zps : photometric redshift of the galaxies in which the membership will be applied
+    
+    rmag : r-band magnitude of the galaxies in which the membership will be applied
+    
+    fz : defines the range of photo-zs for candidate cluster members in terms of sigma_nmad
+    '''
+    
+    sigma = np.array([sigma_nmad(r) for r in rmag])
+    
+    #We will simulate a gaussian PDF for the photo-zs of galaxies in the mock
+    def pdf(x, z, sigma):
+        y = lambda x, z, sigma: (1 / (sigma * np.sqrt(2* np.pi))) * np.exp(-(x - z)**2 / (2*sigma**2)) 
+        a = 1 / integrate.quad(y, 0.0, np.inf, args=(z, sigma))[0]
+        return a * y(x, z, sigma)
+    
+    
+    P_pz_C_array = np.zeros(len(zps))
+    for i in range(len(zps)):
+        z = zps[i]
+        sigma_i = sigma[i]
+
+        if zc - fz*sigma_i*(1+zc) <= 0:
+            P_pz_C = integrate.quad(lambda x, z, sigma_i: pdf(x, z, sigma_i), 0.0, zc + fz*sigma_i*(1+zc), args=(z, sigma_i))[0] 
+
+        if zc - fz*sigma_i*(1+zc) > 0:
+            P_pz_C = integrate.quad(lambda x, z, sigma_i: pdf(x, z, sigma_i), zc - fz*sigma_i*(1+zc), zc + fz*sigma_i*(1+zc), args=(z, sigma_i))[0] 
+                                    
+        P_pz_C_array[i] = P_pz_C
+        
+    return P_pz_C_array
+
+
+
+def radial_mem_prob(clc_dist, rc, plot=True):
     
     # creating CDF of projected clustercentric distances
-    Hz, Rcz = np.histogram(clc_dist, bins=100, normed=True)
+    Hz, Rcz = np.histogram(clc_dist, bins=100, density=True)
     dx = Rcz[1] - Rcz[0]
     Fz = np.cumsum(Hz)*dx
 
@@ -317,11 +374,14 @@ def radial_mem_prob(clc_dist, plot=True):
         fig = plt.figure(figsize=(10, 10))
 
         ax = fig.add_subplot(111)    
-        ax.plot(Rcz[1:], Fz, lw=4.0)
-        ax.plot(Rcz[1:], rho_fitted, lw=4.0, ls="--", label="'Fit'")
-        ax.set_xlabel(r"$R_c$ (deg)", fontdict=font)
+        ax.plot(Rcz[1:]/rc, Fz, lw=5.0, c=colors3[1], label="Projected radial distribution of galaxies", alpha=0.3)
+        ax.plot(Rcz[1:]/rc, rho_fitted, lw=4.0, ls="--", label="Best combined fit", c=colors3[5])
+        ax.plot(Rcz[1:]/rc, rho_c(Rcz[1:], w1, alpha), lw=3.0, ls="-", label="Best cluster fit", c=colors3[3], alpha=0.7)
+        ax.plot(Rcz[1:]/rc, rho_f(Rcz[1:], w2), lw=3.0, ls="-", label="Best field fit", c=colors3[6], alpha=0.7)
+        
+        ax.set_xlabel(r"$R_c/r_{200}$", fontdict=font)
         ax.set_ylabel("CDF", fontdict=font)
-        ax.legend(fontsize=20)
+        ax.legend(fontsize=15)
 
     
     #k is a normalizing factor for the probabilities
@@ -332,21 +392,23 @@ def radial_mem_prob(clc_dist, plot=True):
     return Pmem_R_C, Pmem_R_F
 
 
+
 #Function to perform sigma_clipping
-def sigma_clipping(z_spec, ids, zlower, zupper, sigma):
+def sigma_clipping(zs, ids, zlower, zupper, sigma):
     '''
     Perform a cluster spectroscopic membership using sigma clipping
     '''
     # It is necessary to restrict a little the sample.  We have to look at this cluster by cluster
-    cluster_max_cut = (z_spec > zlower) & (z_spec < zupper)
+    cluster_max_cut = (zs > zlower) & (zs < zupper)
 
-    cluster_sig = sigma_clip(z_spec[cluster_max_cut], sigma=sigma, cenfunc='median', stdfunc='mad_std') 
+    cluster_sig = sigma_clip(zs[cluster_max_cut], sigma=sigma, cenfunc='median', stdfunc='mad_std') 
 
     # Objects selected after applying the 3sigmaclipping cut
-    specz_members = z_spec[cluster_max_cut][~cluster_sig.mask]
+    specz_members = zs[cluster_max_cut][~cluster_sig.mask]
     id_members = ids[cluster_max_cut][~cluster_sig.mask]
     
     return specz_members, id_members
+
 
 
 #Function to compute priors in the same way as in George+11
@@ -437,3 +499,6 @@ def priors_george11(rmags, zps, clc_dist, zc, rc, plot=False):
         ax1.legend(fontsize=10)
         
     return priors
+    
+
+
