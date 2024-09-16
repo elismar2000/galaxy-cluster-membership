@@ -8,10 +8,15 @@ import pandas as pd
 from astropy.coordinates import SkyCoord
 import astropy.units as u
 from astropy.stats import sigma_clip
+import astropy.constants as cons
 
 import scipy.integrate as integrate
 from scipy.optimize import curve_fit
 from scipy.interpolate import interp1d
+
+
+from astropy.cosmology import FlatLambdaCDM
+cosmo = FlatLambdaCDM(H0=67.3, Om0=0.27, Tcmb0=2.725)
 
 
 import matplotlib.cm as cm
@@ -352,45 +357,116 @@ def P_pz_v2_mock(zc, zps, rmag, fz=3.0):
 
 
 
-def radial_mem_prob(clc_dist, rc, plot=True):
+
+#Aqui ainda teria que implementar direito o perfil de NFW, mas como eu não tô utilizando ele por enquanto
+#achei conveniente deixar por isso mesmo
+#Ou seja, por favor não usar o perfil de NFW pois aqui está apenas o perfil de densidade, e não o cumulativo
+def radial_mem_prob(clc_dist, rc, name, fz, cluster_profile="NFW", plot=True):
+    '''
+    clc_dist : clustercentric distances of the galaxies
+    
+    rc : cluster radius
+    
+    cluster_profile : "NFW" or "power-law"
+    
+    plot : bool, to plot or not
+    '''
     
     # creating CDF of projected clustercentric distances
     Hz, Rcz = np.histogram(clc_dist, bins=100, density=True)
     dx = Rcz[1] - Rcz[0]
     Fz = np.cumsum(Hz)*dx
 
-
-    rho_c = lambda R, w1, alpha: 2 * np.pi * w1 * (R**(2 - alpha))/(2 - alpha)
+    
+    #Expression for the cumulative density of the field
     rho_f = lambda R, w2: np.pi * w2 * R**2
-    rho = lambda R, w1, w2, alpha: rho_c(R, w1, alpha) + rho_f(R, w2)
     
     
-    params = curve_fit(rho, Rcz[1:], Fz)[0]
-    w1, w2, alpha = params
+    #Expression for the cumulative density of the cluster (can be either a power-law of a NFW profile)
+    if cluster_profile == "power-law":       
+        rho_c = lambda R, w1, alpha: 2 * np.pi * w1 * (R**(2 - alpha))/(2 - alpha)
+        rho = lambda R, w1, w2, alpha: rho_c(R, w1, alpha) + rho_f(R, w2)
+        
+        params = curve_fit(rho, Rcz[1:], Fz, bounds=((0, 0, 0), (np.inf, np.inf, 3)))[0]
+        w1, w2, alpha = params
+
+    
+    elif cluster_profile == "NFW":
+        def NFW_profile(R, rho_s, r_s):   
+            R = np.deg2rad(R)
+            Sig_1h = np.zeros_like(R)
+            for r, i in zip(R, range(len(R))):
+                x = r/r_s
+                if 1 - np.around(x, 8) == 0.0:
+                    F = 1/3
+                else:
+                    if x < 1:
+                        C = np.arccosh(1/x)
+                    elif x > 1:
+                        C = np.arccos(1/x)
+                    F = 1/(x*2 - 1) * ( 1 - C/np.sqrt(np.abs(x*2 - 1)) )    
+                Sig_1h[i] = 2*r_s*rho_s * F       
+            return Sig_1h
+    
+        rho = lambda R, w2, rho_s, r_s: NFW_profile(R, rho_s, r_s) + rho_f(R, w2)
+        
+        params = curve_fit(rho, Rcz[1:], Fz)[0]
+        w2, rho_s, r_s = params
+   
+
+    else: 
+        print("'cluster_profile' parameter should be either 'NFW' or 'power-law'")
+    
+    
     rho_fitted = rho(Rcz[1:], *params)
     
     
     if plot == True:
-        fig = plt.figure(figsize=(10, 10))
+        if cluster_profile == "power-law":
+            fig = plt.figure(figsize=(10, 10))
 
-        ax = fig.add_subplot(111)    
-        ax.plot(Rcz[1:]/rc, Fz, lw=5.0, c=colors3[1], label="Projected radial distribution of galaxies", alpha=0.3)
-        ax.plot(Rcz[1:]/rc, rho_fitted, lw=4.0, ls="--", label="Best combined fit", c=colors3[5])
-        ax.plot(Rcz[1:]/rc, rho_c(Rcz[1:], w1, alpha), lw=3.0, ls="-", label="Best cluster fit", c=colors3[3], alpha=0.7)
-        ax.plot(Rcz[1:]/rc, rho_f(Rcz[1:], w2), lw=3.0, ls="-", label="Best field fit", c=colors3[6], alpha=0.7)
-        
-        ax.set_xlabel(r"$R_c/r_{200}$", fontdict=font)
-        ax.set_ylabel("CDF", fontdict=font)
-        ax.legend(fontsize=15)
+            ax = fig.add_subplot(111)    
+            ax.plot(Rcz[1:]/rc, Fz, lw=5.0, c=colors3[1], label="Projected radial distribution of galaxies", alpha=0.3)
+            ax.plot(Rcz[1:]/rc, rho_fitted, lw=4.0, ls="--", label="Best combined fit", c=colors3[5])
+            ax.plot(Rcz[1:]/rc, rho_c(Rcz[1:], w1, alpha), lw=3.0, ls="-", label="Best cluster fit", c=colors3[3], alpha=0.7)
+            ax.plot(Rcz[1:]/rc, rho_f(Rcz[1:], w2), lw=3.0, ls="-", label="Best field fit", c=colors3[6], alpha=0.7)
+            
+            ax.text(0.0, 0.8, s=r"$w_1 = {:.2f}$".format(w1), fontsize=15)
+            ax.text(0.0, 0.75, s=r"$\alpha = {:.2f}$".format(alpha), fontsize=15)
+            ax.text(0.0, 0.7, s=r"$w_2 = {:.2f}$".format(w2), fontsize=15)
 
-    
-    #k is a normalizing factor for the probabilities
-    k = rho_c(clc_dist, w1, alpha) + rho_f(clc_dist, w2)
-    Pmem_R_C = rho_c(clc_dist, w1, alpha) / k
+            ax.set_xlabel(r"$R_c/r_{200}$", fontdict=font)
+            ax.set_ylabel("CDF", fontdict=font)
+            ax.legend(fontsize=15)
+
+            #k is a normalizing factor for the probabilities
+            k = rho_c(clc_dist, w1, alpha) + rho_f(clc_dist, w2)
+            Pmem_R_C = rho_c(clc_dist, w1, alpha) / k
+            # plt.savefig("../figures/membership-testing-on-mocks/power-law-radial-fit_fz{}_mock{}.png".format(fz, name), dpi='figure', format='png')
+
+        elif cluster_profile == "NFW":
+            fig = plt.figure(figsize=(10, 10))
+
+            ax = fig.add_subplot(111)    
+            ax.plot(Rcz[1:]/rc, Fz, lw=5.0, c=colors3[1], label="Projected radial distribution of galaxies", alpha=0.3)
+            ax.plot(Rcz[1:]/rc, rho_fitted, lw=4.0, ls="--", label="Best combined fit", c=colors3[5])
+            ax.plot(Rcz[1:]/rc, NFW_profile(Rcz[1:], rho_s, r_s), lw=3.0, ls="-", label="Best cluster fit", c=colors3[3], alpha=0.7)
+            ax.plot(Rcz[1:]/rc, rho_f(Rcz[1:], w2), lw=3.0, ls="-", label="Best field fit", c=colors3[6], alpha=0.7)
+
+            ax.set_xlabel(r"$R_c/r_{200}$", fontdict=font)
+            ax.set_ylabel("CDF", fontdict=font)
+            ax.legend(fontsize=15)
+            # plt.savefig("../figures/membership-testing-on-msocks/NFW-radial-fit_fz{}_mock{}.png".format(fz, name), dpi='figure', format='png')
+
+            #k is a normalizing factor for the probabilities
+            k = NFW_profile(clc_dist, rho_s, r_s) + rho_f(clc_dist, w2)
+            Pmem_R_C = NFW_profile(clc_dist, rho_s, r_s) / k
+            Pmem_R_F = rho_f(clc_dist, w2) / k
+   
+
     Pmem_R_F = rho_f(clc_dist, w2) / k
     
-    return Pmem_R_C, Pmem_R_F
-
+    return Pmem_R_C, Pmem_R_F, w1, w2, alpha
 
 
 #Function to perform sigma_clipping
@@ -408,6 +484,28 @@ def sigma_clipping(zs, ids, zlower, zupper, sigma):
     id_members = ids[cluster_max_cut][~cluster_sig.mask]
     
     return specz_members, id_members
+
+
+
+def spec_members_vesc(m200, rc, zc, zs, f):
+    '''
+    m200 : virial mass of the cluster in units of 10^14 h^-1 Msun
+    rc : virial radius of the cluster in units of h^-1 Mpc
+    zc : cluster redshift
+    zs : spectroscopic redshift of the galaxies
+    f : multiplying factor for v_esc
+    '''
+    
+    #escape velocity of the cluster in km s^-1, acoording to Lima-Dias+21
+    v_esc = 927 * np.sqrt((m200 / (1e14 * u.Msun / cosmo.h))) * np.sqrt((u.Mpc / cosmo.h) / rc)
+    
+    #peculiar velocity of the cluster
+    v_pec = cons.c.to(u.km / u.s) * (zs - zc) / (1 + zc)
+    
+    #selecting member and infalling galaxies
+    mask_members = np.abs(v_pec.value) < f * v_esc
+    
+    return mask_members
 
 
 
