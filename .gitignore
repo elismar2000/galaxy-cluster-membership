@@ -4,4 +4,7 @@ LegacyService.py
 __pycache__/
 tables/
 cluster-mocks/
+testing_dataset_photoz.csv
+testing_dataset_photoz_pdfs.csv
+cra2 2bg fix_step_pstream linear_v FINAL.ipynb
 
