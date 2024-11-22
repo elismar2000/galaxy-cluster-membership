@@ -5,14 +5,13 @@ import pandas as pd
 from multiprocessing import Pool
 import h5py
 
-from astropy.io import ascii, fits
-from astropy.table import Table, join
+from astropy.io import fits
+from astropy.table import join
 from astropy.coordinates import SkyCoord
 import astropy.units as u
 import astropy.constants as cons
 from astropy.visualization.wcsaxes import SphericalCircle
 
-import scipy.integrate as integrate
 from scipy.optimize import curve_fit
 
 from sklearn.neighbors import NearestNeighbors
@@ -153,46 +152,46 @@ for i in range(len(np.unique(firstHaloinFoFGroupId[firstHaloinFoFGroupId > 0])))
     halo_members = np.sum(firstHaloinFoFGroupId == np.unique(firstHaloinFoFGroupId[firstHaloinFoFGroupId > 0])[i])
     halo_members_list.append(halo_members)
 
+halo_ids_list = np.array([])
+for i_mock in np.arange(1, 200, 1):
+    halo_ids = np.unique(firstHaloinFoFGroupId[firstHaloinFoFGroupId > 0])[halo_members_list == np.flip(np.sort(halo_members_list))[i_mock]]
+    halo_ids_list = np.concatenate((halo_ids_list, halo_ids))
+
+halo_ids_list_unique = []
+for h in halo_ids_list:
+    if ~np.isin(h, halo_ids_list_unique): halo_ids_list_unique.append(h)
 
 
-i_mock_list = []
-ra0_list = []
-dec0_list = []
-z_cluster_list = []
-m200_list = []
-r200_mpc_list = []
-r200_deg_list = []
-zp_bias_list = []
-cut_zp_list = []
-w1_list = []
-w2_list = []
-alpha_list = []
-cut_R_list = []
-c_zp_max_list = []
-p_zp_max_list = []
-f1_zp_max_list = []
-c_R_max_list = []
-p_R_max_list = []
-f1_R_max_list = []
-c_zp_list = []
-p_zp_list = []
-c_R_list = []
-p_R_list = []
+i_mock_list = np.load("tables/testing-on-mocks_1/i_mock_list.npy").tolist()
+ra0_list = np.load("tables/testing-on-mocks_1/ra0_list.npy").tolist()
+dec0_list = np.load("tables/testing-on-mocks_1/dec0_list.npy").tolist()
+z_cluster_list = np.load("tables/testing-on-mocks_1/z_cluster_list.npy").tolist()
+m200_list = np.load("tables/testing-on-mocks_1/m200_list.npy").tolist()
+r200_mpc_list = np.load("tables/testing-on-mocks_1/r200_mpc_list.npy").tolist()
+r200_deg_list = np.load("tables/testing-on-mocks_1/r200_deg_list.npy").tolist()
+zp_bias_list = np.load("tables/testing-on-mocks_1/zp_bias_list.npy").tolist()
+cut_zp_list = np.load("tables/testing-on-mocks_1/cut_zp_list.npy").tolist()
+w1_list = np.load("tables/testing-on-mocks_1/w1_list.npy").tolist()
+w2_list = np.load("tables/testing-on-mocks_1/w2_list.npy").tolist()
+alpha_list = np.load("tables/testing-on-mocks_1/alpha_list.npy").tolist()
+cut_R_list = np.load("tables/testing-on-mocks_1/cut_R_list.npy").tolist()
+c_zp_max_list = np.load("tables/testing-on-mocks_1/c_zp_max_list.npy").tolist()
+p_zp_max_list = np.load("tables/testing-on-mocks_1/p_zp_max_list.npy").tolist()
+f1_zp_max_list = np.load("tables/testing-on-mocks_1/f1_zp_max_list.npy").tolist()
+c_R_max_list = np.load("tables/testing-on-mocks_1/c_R_max_list.npy").tolist()
+p_R_max_list = np.load("tables/testing-on-mocks_1/p_R_max_list.npy").tolist()
+f1_R_max_list = np.load("tables/testing-on-mocks_1/f1_R_max_list.npy").tolist()
+c_zp_list = np.load("tables/testing-on-mocks_1/c_zp_list.npy").tolist()
+p_zp_list = np.load("tables/testing-on-mocks_1/p_zp_list.npy").tolist()
+c_R_list = np.load("tables/testing-on-mocks_1/c_R_list.npy").tolist()
+p_R_list = np.load("tables/testing-on-mocks_1/p_R_list.npy").tolist()
+
+
 print("START OF THE LOOP")
-for i_mock in np.arange(1, 51, 1):
+for i_mock in np.arange(106, 200, 1):
    print("COMPUTING FOR CLUSTER {}".format(i_mock))
-   halo_id = np.unique(firstHaloinFoFGroupId[firstHaloinFoFGroupId > 0])[halo_members_list == np.sort(halo_members_list)[-i_mock]]
-   if i_mock == 7: halo_id = halo_id[0]
-   if i_mock == 8: halo_id = halo_id[1]
-   if i_mock == 11: halo_id = halo_id[0]
-   if i_mock == 12: halo_id = halo_id[1]
-   if i_mock == 13: halo_id = halo_id[0]
-   if i_mock == 14: halo_id = halo_id[1]
-   if i_mock == 16: halo_id = halo_id[0]
-   if i_mock == 17: halo_id = halo_id[1]
-   if i_mock == 22: halo_id = halo_id[0]
-   if i_mock == 23: halo_id = halo_id[1]
 
+   halo_id = halo_ids_list_unique[i_mock-1]
    halo_mask = firstHaloinFoFGroupId == halo_id
 
    halo_ra = ra[halo_mask]
@@ -586,82 +585,17 @@ for i_mock in np.arange(1, 51, 1):
 
 
    #To go to the radial probabilities, we have to define a cut in P(C | zp), computed above
-   # mask_cluster_zp = (P_pz_C_array > cut_zp)
-
-   # if np.isin(i_mock, [2, 5, 13, 14, 21, 23]):
-   #         mask_cluster_R = (dist[mask_cluster_unbiased] < 4.0*r200_deg) & mask_cluster_zp
-
-   # elif np.isin(i_mock, [17]):
-   #         mask_cluster_R = (dist[mask_cluster_unbiased] < 3.0*r200_deg) & mask_cluster_zp
-
-   # elif np.isin(i_mock, [7, 8]):
-   #         i_mock_list.append(i_mock)
-   #         ra0_list.append(ra0)
-   #         dec0_list.append(dec0)
-   #         z_cluster_list.append(z_cluster)
-   #         m200_list.append(m200.value)
-   #         r200_mpc_list.append(r200_mpc.value[0])
-   #         r200_deg_list.append(r200_deg[0])
-   #         zp_bias_list.append(zp_bias)
-   #         cut_zp_list.append(cut_zp)
-   #         w1_list.append(np.nan)
-   #         w2_list.append(np.nan)
-   #         alpha_list.append(np.nan)
-   #         cut_R_list.append(np.nan)
-   #         c_zp_max_list.append(completeness_zp[np.argmax(F1_zp)])
-   #         p_zp_max_list.append(purity_zp[np.argmax(F1_zp)])
-   #         f1_zp_max_list.append(F1_zp[np.argmax(F1_zp)])
-   #         c_R_max_list.append(np.nan)
-   #         p_R_max_list.append(np.nan)
-   #         f1_R_max_list.append(np.nan)
-   #         c_zp_list.append(completeness_zp)
-   #         p_zp_list.append(purity_zp)
-   #         c_R_list.append(np.nan)
-   #         p_R_list.append(np.nan)
-
-   #         np.save("tables/testing-on-mocks/i_mock_list", i_mock_list)
-   #         np.save("tables/testing-on-mocks/ra0_list", ra0_list)
-   #         np.save("tables/testing-on-mocks/dec0_list", dec0_list)
-   #         np.save("tables/testing-on-mocks/z_cluster_list", z_cluster_list)
-   #         np.save("tables/testing-on-mocks/m200_list", m200_list)
-   #         np.save("tables/testing-on-mocks/r200_mpc_list", r200_mpc_list)
-   #         np.save("tables/testing-on-mocks/r200_deg_list", r200_deg_list)
-   #         np.save("tables/testing-on-mocks/zp_bias_list", zp_bias_list)
-   #         np.save("tables/testing-on-mocks/cut_zp_list", cut_zp_list)
-   #         np.save("tables/testing-on-mocks/w1_list", w1_list)
-   #         np.save("tables/testing-on-mocks/w2_list", w2_list)
-   #         np.save("tables/testing-on-mocks/alpha_list", alpha_list)
-   #         np.save("tables/testing-on-mocks/cut_R_list", cut_R_list)
-   #         np.save("tables/testing-on-mocks/c_zp_max_list", c_zp_max_list)
-   #         np.save("tables/testing-on-mocks/p_zp_max_list", p_zp_max_list)
-   #         np.save("tables/testing-on-mocks/f1_zp_max_list", f1_zp_max_list)
-   #         np.save("tables/testing-on-mocks/c_R_max_list", c_R_max_list)
-   #         np.save("tables/testing-on-mocks/p_R_max_list", p_R_max_list)
-   #         np.save("tables/testing-on-mocks/f1_R_max_list", f1_R_max_list)
-   #         np.save("tables/testing-on-mocks/c_zp_list", c_zp_list)
-   #         np.save("tables/testing-on-mocks/p_zp_list", p_zp_list)
-   #         np.save("tables/testing-on-mocks/c_R_list", c_R_list)
-   #         np.save("tables/testing-on-mocks/p_R_list", p_R_list)
-   #         continue
-
-   # else:
-   #         mask_cluster_R = (dist[mask_cluster_unbiased] < 5.0*r200_deg) & mask_cluster_zp
-
-
-   # Pmem_R_C, Pmem_R_F, w1, w2, alpha = radial_mem_prob(dist[mask_cluster_unbiased][mask_cluster_R], rc=r200_deg, i_mock=i_mock, fz=fz2, cluster_profile="power-law", plot=True)
-
-   #To go to the radial probabilities, we have to define a cut in P(C | zp), computed above
    print("COMPUTING P(C|R)")
    mask_cluster_zp = (P_pz_C_array > cut_zp)
 
-   no_radial_fit = False
-
    def radial_fit():
+      no_radial_fit = False
       frr = 5
       while frr > 0:
          try:
                mask_cluster_R = (dist[mask_cluster_unbiased] < frr*r200_deg) & mask_cluster_zp
                Pmem_R_C, Pmem_R_F, w1, w2, alpha = radial_mem_prob(dist[mask_cluster_unbiased][mask_cluster_R], rc=r200_deg, name=i_mock, fz=fz2, cluster_profile="power-law", plot=True)
+               return Pmem_R_C, Pmem_R_F, w1, w2, alpha, mask_cluster_R, no_radial_fit
          except RuntimeError:
                frr -= 0.5
                if frr == 0:
@@ -717,13 +651,13 @@ for i_mock in np.arange(1, 51, 1):
                   np.save("tables/testing-on-mocks/p_R_list", p_R_list)
 
                   Pmem_R_C, Pmem_R_F, w1, w2, alpha, mask_cluster_R = [np.nan] * 6
+                  return Pmem_R_C, Pmem_R_F, w1, w2, alpha, mask_cluster_R, no_radial_fit
 
                else:
                   pass
 
-         return Pmem_R_C, Pmem_R_F, w1, w2, alpha, mask_cluster_R, no_radial_fit
-
    Pmem_R_C, Pmem_R_F, w1, w2, alpha, mask_cluster_R, no_radial_fit = radial_fit()
+   print("NÃO TRAVOU, DALE")
    if no_radial_fit: continue
          
 
