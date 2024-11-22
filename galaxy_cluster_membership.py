@@ -13,15 +13,18 @@ import astropy.constants as cons
 import scipy.integrate as integrate
 from scipy.optimize import curve_fit
 from scipy.interpolate import interp1d
+from scipy import special
 
+from sklearn.base import BaseEstimator
+from sklearn.neighbors import BallTree
 
 from astropy.cosmology import FlatLambdaCDM
 cosmo = FlatLambdaCDM(H0=67.3, Om0=0.27, Tcmb0=2.725)
 
-
 import matplotlib.cm as cm
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from matplotlib import rc, rcParams
+
 f = 0.8
 
 fontsize = 35 * f
@@ -44,7 +47,6 @@ font = {'family': 'serif',
         'weight': 'normal',
         'size': 50 * f,
         }
-
 
 cm1 = plt.cm.get_cmap('jet')
 cm2 = plt.cm.get_cmap('rainbow')
@@ -82,7 +84,7 @@ def histedges_equalN(x, nbin):
                      np.sort(x))
 
 
-training_set = pd.read_csv("/work/Doc/galaxy-cluster-membership/testing_dataset_photoz.csv", usecols=['r_PStotal', 'zml', 'z'])
+training_set = pd.read_csv("testing_dataset_photoz.csv", usecols=['r_PStotal', 'zml', 'z'])
 
 rmag_train = training_set["r_PStotal"]
 zml_train = training_set["zml"]
@@ -135,7 +137,7 @@ ax2.legend()
 
 fig.tight_layout(pad=1.0)
     
-def sigma_nmad(r):
+def sigma_nmad_(r):
     if (r > mag_new[:-1][2]): sigma_nmad = func1(r, *popt1)
     elif (r <= mag_new[:-1][2]): sigma_nmad = func1(mag_new[:-1][2], *popt1)
     return sigma_nmad
@@ -288,7 +290,7 @@ def P_pz_v2(zc, rmag, means, weights, stds, fz=3.0):
         defines the range of photo-zs for candidate cluster members in terms of sigma_nmad
     '''
     
-    sigma = np.array([sigma_nmad(r) for r in rmag])
+    sigma = np.array([sigma_nmad_(r) for r in rmag])
     
     
     P_pz_C_array = np.zeros(len(rmag))
@@ -354,8 +356,6 @@ def P_pz_v2_mock(zc, zps, rmag, fz=3.0):
         P_pz_C_array[i] = P_pz_C
         
     return P_pz_C_array
-
-
 
 
 #Aqui ainda teria que implementar direito o perfil de NFW, mas como eu não tô utilizando ele por enquanto
@@ -600,3 +600,106 @@ def priors_george11(rmags, zps, clc_dist, zc, rc, plot=False):
     
 
 
+#AstroML.KNeighborsDensity
+def n_volume(r, n):
+    """compute the n-volume of a sphere of radius r in n dimensions"""
+    return np.pi ** (0.5 * n) / special.gamma(0.5 * n + 1) * (r ** n)
+
+
+class KNeighborsDensity(BaseEstimator):
+    """K-neighbors density estimation
+    Parameters
+    ----------
+    method : string
+        method to use.  Must be one of ['simple'|'bayesian'] (see below)
+    n_neighbors : int
+        number of neighbors to use
+    Notes
+    -----
+    The two methods are as follows:
+    - simple:
+        The density at a point x is estimated by n(x) ~ k / r_k^n
+    - bayesian:
+        The density at a point x is estimated by n(x) ~ sum_{i=1}^k[1 / r_i^n].
+    See Also
+    --------
+    KDE : kernel density estimation
+    """
+    def __init__(self, method='bayesian', n_neighbors=10):
+        if method not in ['simple', 'bayesian']:
+            raise ValueError("method = %s not recognized" % method)
+
+        self.n_neighbors = n_neighbors
+        self.method = method
+
+    def fit(self, X):
+        """Train the K-neighbors density estimator
+        Parameters
+        ----------
+        X : array_like
+            array of points to use to train the KDE.  Shape is
+            (n_points, n_dim)
+        """
+        self.X_ = np.atleast_2d(X)
+
+        if self.X_.ndim != 2:
+            raise ValueError('X must be two-dimensional')
+
+        self.bt_ = BallTree(self.X_, metric="haversine")
+
+        return self
+
+    def eval(self, X):
+        """Evaluate the kernel density estimation
+        Parameters
+        ----------
+        X : array_like
+            array of points at which to evaluate the KDE.  Shape is
+            (n_points, n_dim), where n_dim matches the dimension of
+            the training points.
+        Returns
+        -------
+        dens : ndarray
+            array of shape (n_points,) giving the density at each point.
+            The density will be normalized for metric='gaussian' or
+            metric='tophat', and will be unnormalized otherwise.
+        """
+        X = np.atleast_2d(X)
+        if X.ndim != 2:
+            raise ValueError('X must be two-dimensional')
+
+        if X.shape[1] != self.X_.shape[1]:
+            raise ValueError('dimensions of X do not match training dimension')
+
+        dist, ind = self.bt_.query(X, self.n_neighbors, return_distance=True)
+
+        k = float(self.n_neighbors)
+        ndim = X.shape[1]
+
+        if self.method == 'simple':
+            return k / n_volume(dist[:, -1], ndim)
+
+        elif self.method == 'bayesian':
+            # XXX this may be wrong in more than 1 dimension!
+            return (k * (k + 1) * 0.5 / n_volume(1, ndim)
+                    / (dist ** ndim).sum(1))
+        else:
+            raise ValueError("Unrecognized method '%s'" % self.method)
+
+
+
+def knn2D(x, y, K, xbins=200j, ybins=200j, **kwargs): 
+    """Build 2D Nearest-Neighbor density estimate (KNN)."""
+
+    # create grid of sample locations (default: 100x100)
+    xx, yy = np.mgrid[x.min():x.max():xbins, y.min():y.max():ybins]
+
+    xy_sample = np.vstack([yy.ravel(), xx.ravel()]).T
+    xy_train  = np.vstack([y, x]).T
+
+    knd = KNeighborsDensity(method="bayesian", n_neighbors=K)
+    knd.fit(xy_train)
+
+    # score_samples() returns the log-likelihood of the samples
+    z = knd.eval(xy_sample)
+    return xx, yy, np.reshape(z, xx.shape)
