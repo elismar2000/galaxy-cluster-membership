@@ -138,8 +138,8 @@ ax2.legend()
 fig.tight_layout(pad=1.0)
     
 def sigma_nmad_(r):
-    if (r > mag_new[:-1][2]): sigma_nmad = func1(r, *popt1)
-    elif (r <= mag_new[:-1][2]): sigma_nmad = func1(mag_new[:-1][2], *popt1)
+    if (r > 16.5): sigma_nmad = func1(r, *popt1)
+    elif (r <= 16.5): sigma_nmad = func1(16.5, *popt1)
     return sigma_nmad
 
 
@@ -150,56 +150,78 @@ def calc_PDF_series(weights, means, stds, x_range=None, optimize_zml=False):
     Returns a list of PDFs calculated as a combination of Gaussian functions
 
     Keyword arguments:
-    x            -- Photometric redshift range for which the PDF should be calculated
     weights      -- Weight of the Gaussian components
     means        -- means of the Gaussian components
     stds         -- Standard deviation of the Gaussian components
+    x_range      -- Photometric redshift range for which the PDF should be calculated
     optimize_zml -- If the single-point estimate of photometric redshift should be optimized (if True, it will be
                     determined on a finer grid of points)
     '''
     
     if x_range is None:
-        x = np.arange(-0.005, 1+0.001, 0.001) 
+        x = np.arange(-0.005, 1+0.001, 0.001)
     else:
         x = x_range
                       
     # Convert columns from string to lists
-    if type(weights) != np.ndarray:
-        weights = np.array(weights)
-        means   = np.array(means)
-        stds    = np.array(stds)
+    weights = np.array(weights)
+    means   = np.array(means)
+    stds    = np.array(stds)
 
-    # Calculating PDFs and optimizing photo-zs (optional)
-    PDFs           = []
+    # Calculating PDFs and optionally optimizing photo-zs
+    pdfs           = []
     optimized_zmls = np.empty(len(means))
     
+    if np.ndim(weights) == 1: # for one object
+        pdf  = np.sum(weights*(1/(stds*np.sqrt(2*np.pi))) * 
+                      np.exp((-1/2) * ((x[:,None]-means)**2)/(stds)**2), axis=1)
+        pdfs = pdf/np.trapz(pdf, x)
+        zmls = x[np.argmax(pdfs)]
+
     if np.ndim(weights) == 2: # weights, means, and stds are 2D arrays 
         for i in range(len(weights)):
-            PDF = np.sum(weights[i]*(1/(stds[i]*np.sqrt(2*np.pi))) * np.exp((-1/2) * ((x[:,None]-means[i])**2)/(stds[i])**2), axis=1)
-            PDF = PDF/np.trapz(PDF, x)
-            PDFs.append(PDF)
-        zmls = x[np.argmax(PDFs, axis=1)]
-        
-    if np.ndim(weights) == 1:
-        PDF  = np.sum(weights*(1/(stds*np.sqrt(2*np.pi))) * np.exp((-1/2) * ((x[:,None]-means)**2)/(stds)**2), axis=1)
-        PDFs = PDF/np.trapz(PDF, x)
-        zmls = x[np.argmax(PDFs)]
+            pdf = np.sum(weights[i]*(1/(stds[i]*np.sqrt(2*np.pi))) * 
+                         np.exp((-1/2) * ((x[:,None]-means[i])**2)/(stds[i])**2), axis=1)
+            pdf = pdf/np.trapz(pdf, x)
+            pdfs.append(pdf)
+        zmls = x[np.argmax(pdfs, axis=1)]
+
+    # To avoid unecessary compulations, we can calculate constant terms out of the loop
+    constant_terms = (1/(stds*np.sqrt(2*np.pi)))
 
     if optimize_zml == True:
-        for i in range(len(weights)):
+        if np.ndim(weights) == 1:
             # First run
-            optimized_x   = np.linspace(zmls[i]-0.002, zmls[i]+0.002, 500, endpoint=True)
-            optimized_PDF = np.sum(weights[i]*(1/(stds[i]*np.sqrt(2*np.pi))) * np.exp((-1/2) * ((optimized_x[:,None]-means[i])**2)/(stds[i])**2), axis=1)
-            optimized_zml = optimized_x[np.argmax(optimized_PDF)]
+            optimized_x   = np.linspace(zmls-0.01, zmls+0.01, 50, endpoint=True)
+            optimized_pdf = np.sum(weights*(1/(stds*np.sqrt(2*np.pi))) * 
+                                  np.exp((-1/2) * ((optimized_x[:,None]-means)**2)/(stds)**2), axis=1)
+            optimized_zml = optimized_x[np.argmax(optimized_pdf)]
 
             # Second run
-            optimized_x   = np.linspace(optimized_zml-0.001, optimized_zml+0.001, 300, endpoint=True)
-            optimized_PDF = np.sum(weights[i]*(1/(stds[i]*np.sqrt(2*np.pi))) * np.exp((-1/2) * ((optimized_x[:,None]-means[i])**2)/(stds[i])**2), axis=1)
-            optimized_zmls[i] = optimized_x[np.argmax(optimized_PDF)]
+            optimized_x   = np.linspace(optimized_zml-0.001, optimized_zml+0.001, 100, endpoint=True)
+            optimized_pdf = np.sum(weights*(1/(stds*np.sqrt(2*np.pi))) * 
+                                  np.exp((-1/2) * ((optimized_x[:,None]-means)**2)/(stds)**2), axis=1)
+            optimized_zml = optimized_x[np.argmax(optimized_pdf)]
 
-        zmls = optimized_zmls
+            zmls = optimized_zml
+
+        if np.ndim(weights) == 2:
+            for i in range(len(weights)):
+                # First run
+                optimized_x   = np.linspace(zmls[i]-0.002, zmls[i]+0.002, 50, endpoint=True)
+                optimized_pdf = np.sum(weights[i]*constant_terms[i] * 
+                                    np.exp((-1/2) * ((optimized_x[:,None]-means[i])**2)/(stds[i])**2), axis=1)
+                optimized_zml = optimized_x[np.argmax(optimized_pdf)]
+
+                # Second run
+                optimized_x   = np.linspace(optimized_zml-0.001, optimized_zml+0.001, 100, endpoint=True)
+                optimized_pdf = np.sum(weights[i]*constant_terms[i] * 
+                                    np.exp((-1/2) * ((optimized_x[:,None]-means[i])**2)/(stds[i])**2), axis=1)
+                optimized_zmls[i] = optimized_x[np.argmax(optimized_pdf)]
+
+            zmls = optimized_zmls
                 
-    return PDFs, zmls, x
+    return pdfs, zmls, x
 
 
 
