@@ -1,5 +1,7 @@
 trash_tables/
 trash-codes/
+pdfs/
+.virtual_documents/
 .ipynb_checkpoints/
 LegacyService.py
 __pycache__/
